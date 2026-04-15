@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Video Room</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #0f172a; 
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            padding: 20px 30px;
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #e2e8f0;
+            letter-spacing: -0.025em;
+        }
+
+        .room-badge { 
+            background: #2563eb; 
+            padding: 6px 12px;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-family: monospace;
+            font-weight: 500;
+            box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.05);
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1400px;
+        }
+
+        .video-card {
+            background-color: #1e293b;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            border: 1px solid #334155;
+            aspect-ratio: 16/9;
+            position: relative;
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .control-bar {
+            background: #1e293b;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            border-top: 1px solid #334155;
+            box-shadow: 0 -4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .btn {
+            background: #334155;
+            color: #f8fafc;
+            border: 1px solid transparent;
+            padding: 12px 28px;
+            border-radius: 9999px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .btn:hover {
+            background: #475569;
+            transform: translateY(-1px);
+        }
+
+        .btn-danger {
+            background: #ef4444;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Pro Video Room</h1>
+        <div class="room-badge">Room ID: <%= roomId %></div>
+    </div>
+
+    <div class="main-content">
+        <div id="video-grid"></div>
+    </div>
+
+    <div class="control-bar">
+        <button class="btn" id="mute-btn">Mute Audio</button>
+        <button class="btn" id="video-btn">Stop Video</button>
+        <button class="btn btn-danger" id="leave-btn">Leave Room</button>
+    </div>
+    
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io('/');
+        const videoGrid = document.getElementById('video-grid');
+        const ROOM_ID = "<%= roomId %>";
+        
+        const peer = new Peer();
+        const myVideo = document.createElement('video');
+        myVideo.muted = true; // Mute our own video to prevent feedback loop
+
+        let myVideoStream;
+
+        navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+        }).then(stream => {
+            myVideoStream = stream;
+            addVideoStream(myVideo, stream);
+
+            peer.on('call', call => {
+                call.answer(stream);
+                const video = document.createElement('video');
+                call.on('stream', userVideoStream => {
+                    addVideoStream(video, userVideoStream);
+                });
+            });
+
+            socket.on('user-connected', userId => {
+                connectToNewUser(userId, stream);
+            });
+        }).catch(err => {
+            console.error("Error accessing media devices.", err);
+        });
+
+        peer.on('open', id => {
+            socket.emit('join-room', ROOM_ID, id);
+        });
+
+        const activeStreams = new Set();
+
+        function addVideoStream(video, stream) {
+            if (!stream) return;
+            if (activeStreams.has(stream.id)) return;
+            
+            activeStreams.add(stream.id);
+            video.srcObject = stream;
+            video.addEventListener('loadedmetadata', () => {
+                video.play();
+            });
+
+            if (!video.parentElement) {
+                const videoCard = document.createElement('div');
+                videoCard.className = 'video-card';
+                videoCard.append(video);
+                videoGrid.append(videoCard);
+            }
+        }
+
+        function connectToNewUser(userId, stream) {
+            const call = peer.call(userId, stream);
+            const video = document.createElement('video');
+            call.on('stream', userVideoStream => {
+                addVideoStream(video, userVideoStream);
+            });
+        }
+
+        // Control Bar Handlers
+        const muteBtn = document.getElementById('mute-btn');
+        const videoBtn = document.getElementById('video-btn');
+        const leaveBtn = document.getElementById('leave-btn');
+
+        muteBtn.addEventListener('click', () => {
+            if(!myVideoStream) return;
+            const audioTrack = myVideoStream.getAudioTracks()[0];
+            if (audioTrack.enabled) {
+                audioTrack.enabled = false;
+                muteBtn.innerText = 'Unmute Audio';
+                muteBtn.style.background = '#ef4444'; // Red indication
+            } else {
+                audioTrack.enabled = true;
+                muteBtn.innerText = 'Mute Audio';
+                muteBtn.style.background = '#334155'; // Normal
+            }
+        });
+
+        videoBtn.addEventListener('click', () => {
+            if(!myVideoStream) return;
+            const videoTrack = myVideoStream.getVideoTracks()[0];
+            if (videoTrack.enabled) {
+                videoTrack.enabled = false;
+                videoBtn.innerText = 'Start Video';
+                videoBtn.style.background = '#ef4444'; // Red indication
+            } else {
+                videoTrack.enabled = true;
+                videoBtn.innerText = 'Stop Video';
+                videoBtn.style.background = '#334155'; // Normal
+            }
+        });
+
+        leaveBtn.addEventListener('click', () => {
+            peer.destroy();
+            window.location.href = '/'; 
+        });
+    </script>
+</body>
+</html>
